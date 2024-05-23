@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html>
+  <body>
+    <h2>Chat App Client</h2>
+    <input type="text" id="username" placeholder="Enter your username">
+    <br/>
+    <input type="text" id="friend" placeholder="Enter your friend's username">
+    <br/>
+    <button onclick="connect()">Start chat!</button>
+    <br/>
+
+   <div id="chat-container">
+      <h3>Conversation</h3>
+      <div id="msgs" style="border:1px solid #000; padding:10px; height:200px; overflow-y:scroll;">
+        <!-- Messages displayed here -->
+      </div>
+      <br/>
+      <input type="text" id="msg-input" placeholder="Enter your message">
+      <button onclick="sendMessage()">Send</button>
+    </div>
+
+    <script>
+      const host = "localhost";
+      const sendPort = "8765";
+      const rcvPort = "8764";
+      let sendSocket;
+      let receiveSocket;
+      let username;
+      let friend;
+
+      function updateMsgs (msg, username) {
+        const msgContainer = document.getElementById("msgs");
+        const newMsg = document.createElement("div");
+        newMsg.textContent = `${username}: ${msg}`;
+        msgContainer.appendChild(newMsg);
+      }
+
+      function connect () {
+        if (sendSocket && receiveSocket) {
+          window.alert("Chat is already connected");
+        } else {
+          username = document.getElementById("username").value;
+          friend = document.getElementById("friend").value;
+          sendSocket = new WebSocket(`ws://${host}:${sendPort}?username=${username}&friend=${friend}`);
+          receiveSocket = new WebSocket(`ws://${host}:${rcvPort}?username=${username}&friend=${friend}`);
+          
+          if (!sendSocket || !receiveSocket) {
+            window.alert("Failed to connect to chat. Please try again.")
+          } else {
+            const msgContainer = document.getElementById("msgs");
+            const newMsg = document.createElement("div");
+            newMsg.textContent = "----- Connected to chat -----";
+            msgContainer.appendChild(newMsg);
+          };
+
+          sendSocket.onopen = function() {
+            console.log("Connected to Websocket for sending messages");
+          };
+
+          receiveSocket.onopen = function () {
+            console.log("Connected to Websocket for receiving messages");
+          };
+
+          receiveSocket.onmessage = function(event) {
+            console.log("Message from server: " + event.data);
+            updateMsgs(event.data, friend);
+          };
+
+          receiveSocket.onclose = function() {
+            console.log("Disconnected from Websocket for receiving messages");
+            receiveSocket = undefined;
+            const msgContainer = document.getElementById("msgs");
+            const newMsg = document.createElement("div");
+            newMsg.textContent = "----- Chat was ended -----";
+            msgContainer.appendChild(newMsg);
+          };
+
+          sendSocket.onclose = function() {
+            console.log("Disconnected from Websocket for sending messages");
+            sendSocket = undefined;
+          };
+        };
+      }
+
+      function sendMessage() {
+        const msg_input = document.getElementById("msg-input");
+        const msg = msg_input.value;
+        sendSocket.send(msg);
+        updateMsgs(msg, username);
+        msg_input.value = "";
+      }
+      
+    </script>
+
+  </body>
+</html>
