@@ -8,8 +8,8 @@ from aio_pika import connect_robust, Message
 import websockets
 from websockets import WebSocketServerProtocol
 
-logging.basicConfig(level=logging.DEBUG)
-logger = logging.getLogger()
+logging.basicConfig(level=logging.DEBUG, format="%(asctime)s : %(levelname)s : %(message)s")
+logger = logging.getLogger(__name__)
 
 
 WS_HOST = os.getenv("WS_HOST", "localhost")
@@ -27,10 +27,10 @@ def parse_query_params(url: str) -> tuple[str, str] | None:
     friend = query_params.get("friend", [None])[0]
 
     if not user:
-        logger.error(f"Missing username for user. Cannot establish chat connection.")
+        logger.error("Missing username for user. Cannot establish chat connection.")
         return None
     if not friend:
-        logger.error(f"Missing username for friend. Cannot establish chat connection.")
+        logger.error("Missing username for friend. Cannot establish chat connection.")
         return None
     
     logger.info(f"Handling connection for user: {user}, friend: {friend}")

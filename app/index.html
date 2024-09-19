@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        margin: 20px;
+      }
+      h2 {
+        color: #333;
+      }
+      div {
+        margin-top: 10px;
+        margin-bottom: 10px;
+      }
+      .container {
+        margin-bottom: 20px;
+      }
+      .container input, .container button {
+        padding: 10px;
+        margin-top: 10px;
+        margin-bottom: 10px;
+        width: 100%;
+        box-sizing: border-box;
+      }
+      #status {
+        margin-top: 10px;
+        margin-bottom: 10px;
+        color: gray;
+      }
+    </style>
+  </head>
+  <body>
+    <h2>Chat App Client</h2>
+    <div id="status">Status: Logged Out</div>
+    <div>
+      <input type="text" id="username" placeholder="Enter your username">
+      <br/>
+      <input type="password" id="password" placeholder="Enter your password">
+      <br/>
+      <button onclick="login()">Login</button>
+      <br/>
+    </div>
+    
+    <div>
+      <input type="text" id="friends" placeholder="Enter a single username or list of usernames separated by commas">
+      <br/>
+      <button onclick="startChat()">Start chat!</button>
+      <br/>
+    </div>
+
+    <div class="chat-list" id="chat-list">
+      <h3>Conversations</h3>
+      <!-- Conversation list will be populated here -->
+    </div>
+
+    <div id="chat-container"></div>
+
+      <script>
+        const host = "localhost";
+        const port = "8000";
+        let token;
+        let onlineStatusSocket;
+        let sendSocket;
+        let receiveSocket;
+        let heartbeatInterval;
+        let username;
+
+        async function getToken(username, password) {
+          const resp = await fetch(`http://${host}:${port}/chat/token`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/x-www-form-urlencoded'
+            },
+            body: `username=${username}&password=${password}`
+          });
+
+          if (resp.ok) {
+            const data = await resp.json();
+            return data.token;
+          } else {
+            throw new Error('Failed to authenticate');
+          };
+        }
+
+        async function login () {
+          username = document.getElementById("username").value;
+          password = document.getElementById("password").value;
+          try {
+            token = await getToken(username, password);
+            maintainOnlineStatus();
+            document.getElementById("status").innerText = "Status: Logged in";
+            window.alert(`Welcome ${username}!`);
+          } catch (error) {
+            window.alert("Authentication failed: " + error.message);
+            document.getElementById("status").innerText = "Status: Login failed";
+          };
+        }
+
+        function maintainOnlineStatus () {
+          onlineStatusSocket = new WebSocket(`ws://${host}:${port}/ws/online`);
+
+          onlineStatusSocket.onopen = function () {
+            onlineStatusSocket.send(token);
+            console.log("Online status socket opened");
+            document.getElementById("status").innerText = "Status: Online";
+            startHeartbeat();
+          }
+
+          onlineStatusSocket.onclose = function () {
+            console.log("Online status socket closed");
+            document.getElementById("status").innerText = "Status: Offline";
+            clearInterval(heartbeatInterval);
+            setTimeout(maintainOnlineStatus, 2500);
+          }
+
+          onlineStatusSocket.onmessage = function(event) {
+            console.log("Message from server: ", event.data);
+          };
+        }
+
+        function startHeartbeat () {
+          console.log("Starting heartbeat");
+          heartbeatInterval = setInterval(() => {
+            if (onlineStatusSocket.readyState === WebSocket.OPEN) {
+              console.log("Sending ping");
+              onlineStatusSocket.send("ping");
+            }
+          }, 5000);
+        }
+
+        async function getConversationID (usernames) {
+          const resp = await fetch(`http://${host}:${port}/chat/conversation-id?usernames=${usernames.join(",")}`, {
+            headers: {"Authorization": `Bearer ${token}`}
+          });
+          if (resp.ok) {
+            return await resp.json();
+          } else {
+            errMsg = await resp.text();
+            throw new Error(errMsg);
+          };
+        }
+
+        async function getChatHistory (conversationId) {
+          resp = await fetch(`/chat/history/${conversationId}`, {
+            headers: {"Authorization": `Bearer ${token}`}
+          });
+          if (resp.ok) {
+            const data = await resp.json();
+            console.log("msgs:", data.msgs);
+            return data.msgs;
+          } else {
+            throw new Error("Error retreiving chat history");
+          };
+        }
+
+        function updateMsgs (containerId, msg) {
+          const msgContainer = document.getElementById(containerId);
+          const newMsg = document.createElement("div");
+          newMsg.className = "message";
+          msg_time = new Date(msg.sent_timestamp * 1000);
+          newMsg.innerHTML = `<p><b>${msg.sender_username}</b> <i>(${msg_time.toLocaleDateString()}, ${msg_time.toLocaleTimeString()})</i></p><p>${msg.content}</p>`;
+          msgContainer.appendChild(newMsg);
+          msgContainer.scrollTop = msgContainer.scrollHeight;
+        }
+
+        function createChatWindow (socket, conversationId, friends) {
+          const chatContainer = document.getElementById("chat-container");
+
+          const chatWindow = document.createElement("div");
+          chatWindow.id = `chat-${conversationId}`;
+          chatWindow.className = "chat-window";
+
+          const chatHeader = document.createElement("div");
+          chatHeader.className = "chat-header";
+
+          const chatTitle = document.createElement("h3");
+          chatTitle.innerText = `Conversation with ${friends}`;
+          chatHeader.appendChild(chatTitle);
+
+          const convoStatus = document.createElement("i");
+          convoStatus.id = `convo-status-${conversationId}`;
+          convoStatus.style.color = "salmon";
+          convoStatus.innerText = "(disconnected)";
+          chatHeader.appendChild(convoStatus);
+
+          chatWindow.appendChild(chatHeader);
+
+          const msgContainer = document.createElement("div");
+          msgContainer.id = `msgs-${conversationId}`;
+          msgContainer.style.height = "300px";
+          msgContainer.style.overflowY = "scroll";
+          msgContainer.style.border = "1px solid #000";
+          msgContainer.style.padding = "10px";
+          chatWindow.appendChild(msgContainer);
+
+          const msgInput = document.createElement("input");
+          msgInput.type = "text";
+          msgInput.placeholder = "Enter your message";
+          msgInput.id = `msg-input-${conversationId}`;
+          chatWindow.appendChild(msgInput);
+
+          const sendButton = document.createElement("button");
+          sendButton.innerText = "Send";
+          sendButton.onclick = () => sendMessage(socket, conversationId);
+          chatWindow.appendChild(sendButton);
+
+          chatContainer.appendChild(chatWindow);
+        }
+
+        async function startChat () {
+          if (!token) {
+            window.alert("Please log in before starting a chat!");
+            return;
+          };
+
+          const friends = document.getElementById("friends").value.split(",");
+          try {
+            const conversationId = await getConversationID([username, ...friends]);
+            console.log("Conversation ID: ", conversationId)
+
+            const sendSocket = new WebSocket(`ws://${host}:${port}/ws/send/${conversationId}`);
+            const receiveSocket = new WebSocket(`ws://${host}:${port}/ws/rcv/${conversationId}`);
+
+            if (!sendSocket || !receiveSocket) {
+              window.alert("Failed to connect to chat. Please try again.")
+              return;
+            };
+
+            sendSocket.onopen = function() {
+              sendSocket.send(token);
+              console.log("Connected to Websocket for sending messages");
+              updateConvoStatus(`convo-status-${conversationId}`, true);
+            };
+
+            receiveSocket.onopen = function () {
+              receiveSocket.send(token);
+              console.log("Connected to Websocket for receiving messages");
+            };
+
+            receiveSocket.onmessage = function(event) {
+              console.log("Message from server: " + event.data);
+              const msg = JSON.parse(event.data);
+              updateMsgs(`msgs-${conversationId}`, msg);
+            };
+
+            receiveSocket.onclose = function() {
+              console.log("Disconnected from Websocket for receiving messages");
+              if (sendSocket.readyState !== WebSocket.OPEN) {
+                updateConvoStatus(`convo-status-${conversationId}`, false);
+              };
+            };
+
+            sendSocket.onclose = function() {
+              console.log("Disconnected from Websocket for sending messages");
+              if (receiveSocket.readyState !== WebSocket.OPEN) {
+                updateConvoStatus(`convo-status-${conversationId}`, false);
+              };
+            };
+
+            createChatWindow(sendSocket, conversationId, friends);
+            const msgs = await getChatHistory(conversationId);
+            for (let msg of msgs) {
+              updateMsgs(`msgs-${conversationId}`, msg);
+            };
+
+          } catch (error) {
+            window.alert("Error connecting to chat: " + error.message);
+          };
+        }
+        
+        function sendMessage (socket, conversationId) {
+          const msgInput = document.getElementById(`msg-input-${conversationId}`);
+          const msg = msgInput.value;
+          socket.send(msg);
+          updateMsgs(`msgs-${conversationId}`, {
+            sent_timestamp: Date.now() / 1000,
+            sender_username: username,
+            content: msg
+          });
+          msgInput.value = "";
+        }
+
+        function updateConvoStatus (statusId, online) {
+          const convoStatus = document.getElementById(statusId);
+          if (online) {
+            convoStatus.innerText = "(connected)";
+            convoStatus.style.color = "green";
+          } else {
+            convoStatus.innerText = "(disconnected)";
+            convoStatus.style.color = "salmon";
+          };
+        }
+
+      </script>
+
+  </body>
+</html>
